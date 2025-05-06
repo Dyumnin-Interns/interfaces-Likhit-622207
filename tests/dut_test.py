@@ -1,6 +1,6 @@
 import cocotb
 from cocotb.triggers import Timer,RisingEdge, ReadOnly, NextTimeStep
-from cocotb_bus.driver import BusDriver
+from cocotb_bus.drivers import BusDriver
 
 def cb_fn(actual_value):
     global expected_value
