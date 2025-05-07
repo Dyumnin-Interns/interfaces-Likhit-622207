@@ -42,7 +42,7 @@ async def dut_test(dut):
         await w_drv._driver_sent(5, b[i])  # Write to b_ff
         
         # Processing delay (3 cycles - accounts for a_ff and y_ff size=2)
-        for _ in range(200):
+        for _ in range(3):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
         
@@ -90,9 +90,11 @@ class OutputDriver(BusDriver):
         self.callback = sb_callback
 
     async def _driver_sent(self, address, sync=True):
+        # Wait for the read_rdy signal to be high before reading
         await RisingEdge(self.clk)
         while not self.bus.read_rdy.value:
-            await RisingEdge(self.clk)   
+            await RisingEdge(self.clk)  # Wait until read_rdy is high
+        
         self.bus.read_en.value = 1
         self.bus.read_address.value = address
         
@@ -100,6 +102,7 @@ class OutputDriver(BusDriver):
         if self.callback:
             self.callback(int(self.bus.read_data.value))
         
-        await RisingEdge(self.clk)
+        # Disable read operation after reading
         self.bus.read_en.value = 0
+        await RisingEdge(self.clk)  # Ensure we wait for the next clock cycle
         await NextTimeStep()
