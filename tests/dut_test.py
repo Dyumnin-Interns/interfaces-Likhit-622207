@@ -98,8 +98,7 @@ class OutputDriver(BusDriver):
     async def _driver_sent(self, address, sync=True):
         await RisingEdge(self.clk)
         while not self.bus.read_rdy.value:
-            await RisingEdge(self.bus.read_rdy)
-        
+            await RisingEdge(self.clk)        
         self.bus.read_en.value = 1
         self.bus.read_address.value = address
         
