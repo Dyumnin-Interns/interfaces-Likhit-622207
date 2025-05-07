@@ -41,7 +41,7 @@ async def dut_test(dut):
         await w_drv._driver_sent(5, b[i])  # Write to b_ff
         
         # Extended processing delay for delayed DUT (7 cycles)
-        for _ in range(7):
+        for _ in range(55):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
         
