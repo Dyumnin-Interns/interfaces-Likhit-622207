@@ -22,40 +22,44 @@ async def dut_test(dut):
     test_failures = 0
     
     # Test vectors (a, b, expected OR result)
-    # Add edge cases to your test vectors
     a = (0, 0, 1, 1)
     b = (0, 1, 0, 1)
     expected_value = [0, 1, 1, 1]
-    # Reset sequence (2 cycles)
+
+    # Reset sequence (extended to ensure clean start)
     dut.RST_N.value = 0
-    await Timer(20, 'ns')
+    await Timer(100, 'ns')  # Extended reset
     dut.RST_N.value = 1
-    await Timer(20, 'ns')
+    await Timer(100, 'ns')  # Additional stabilization
 
     # Create drivers
     w_drv = InputDriver(dut, "", dut.CLK)
     r_drv = OutputDriver(dut, "", dut.CLK, sb_fn)
 
     for i in range(4):
-        # Write phase (2 cycles - accounts for b_ff size=1)
+        # Write phase with proper handshaking
         await w_drv._driver_sent(4, a[i])  # Write to a_ff
         await w_drv._driver_sent(5, b[i])  # Write to b_ff
         
-        # Processing delay (3 cycles - accounts for a_ff and y_ff size=2)
-        for _ in range(3):
+        # Extended processing delay (5 cycles total)
+        for _ in range(5):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
         
-        # Read phase (1 cycle)
+        # Read phase
         await r_drv._driver_sent(3)  # Read from y_ff
+        await RisingEdge(dut.CLK)
+        await NextTimeStep()
+
+        # Additional recovery cycle
         await RisingEdge(dut.CLK)
         await NextTimeStep()
 
     # Final check
     if test_failures > 0:
-        raise TestFailure(f"Test failed with {test_failures} mismatches")
+        assert False, f"Test failed with {test_failures} mismatches"
     elif expected_value:
-        raise TestFailure(f"Test completed but {len(expected_value)} expected values weren't checked")
+        assert False, f"Test completed but {len(expected_value)} expected values weren't checked"
     print("All test vectors passed successfully!")
 
 class InputDriver(BusDriver):
@@ -101,8 +105,7 @@ class OutputDriver(BusDriver):
         self.bus.read_address.value = address
         
         await ReadOnly()
-        if self.callback:
-            self.callback(int(self.bus.read_data.value))
+        self.callback(int(self.bus.read_data.value))
         
         await RisingEdge(self.clk)
         self.bus.read_en.value = 0
