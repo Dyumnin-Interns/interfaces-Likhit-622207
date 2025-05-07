@@ -2,18 +2,20 @@ import cocotb
 from cocotb.triggers import Timer, RisingEdge, ReadOnly, NextTimeStep
 from cocotb_bus.drivers import BusDriver
 
-def sb_fn(actual_value):
-    global expected_value, test_failures
-    if not expected_value:
-        print("Warning: Unexpected output received")
-        return
-    
-    expected = expected_value.pop(0)
-    print(f"Expected: {expected}, Actual: {actual_value}")
-    
-    if actual_value != expected:
-        test_failures += 1
-        print("  -> Mismatch detected!")
+def get_sb_fn(expected_values, test_failures_ref):
+    def sb_fn(actual_value):
+        if not expected_values:
+            print("Warning: Unexpected output received")
+            return
+
+        expected = expected_values.pop(0)
+        print(f"Expected: {expected}, Actual: {actual_value}")
+
+        if actual_value != expected:
+            test_failures_ref[0] += 1
+            print("  -> Mismatch detected!")
+    return sb_fn
+
 
 @cocotb.test()
 async def dut_test(dut):
