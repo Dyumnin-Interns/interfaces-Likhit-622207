@@ -27,13 +27,13 @@ def sb_fn(actual_value):
 def ab_cover(a, b):
     pass
 
-@CoverPoint("top.inputport.current_w", xf=lambda x: x.get('current_w'), bins=["Idle_w", "Txn_w"])
+@CoverPoint("top.inputport.current_w", xf=lambda x: x.get('current_w'), bins=["Idle_w", "Txn_w"])  # only two states as write_rdy is always 1
 @CoverPoint("top.inputport.previous_w", xf=lambda x: x.get('previous_w'), bins=["Idle_w", "Txn_w"])
 @CoverCross("top.cross.input", items=["top.inputport.previous_w", "top.inputport.current_w"])
 def inputport_cover(Txn_w_dict):
     pass
 
-@CoverPoint("top.outputport.current_r", xf=lambda x: x.get('current_r'), bins=["Idle_r", "Txn_r"])
+@CoverPoint("top.outputport.current_r", xf=lambda x: x.get('current_r'), bins=["Idle_r", "Txn_r"])  # only two states as read_rdy is always 1
 @CoverPoint("top.outputport.previous_r", xf=lambda x: x.get('previous_r'), bins=["Idle_r", "Txn_r"])
 @CoverCross("top.cross.output", items=["top.outputport.previous_r", "top.outputport.current_r"])
 def outputport_cover(Txn_r_dict):
@@ -55,23 +55,22 @@ async def dut_test(dut):
     await Timer(20, 'ns')
     dut.RST_N.value = 1
 
-    # Setup drivers and monitors
     w_drv = InputDriver(dut, "", dut.CLK)
     r_drv = OutputDriver(dut, "", dut.CLK, sb_fn)
     InputMonitor(dut, "", dut.CLK, callback=inputport_cover)
     OutputMonitor(dut, "", dut.CLK, callback=outputport_cover)
 
-    for _ in range(50):  # Random test iterations
+    for _ in range(50):  # Random test
         a = random.randint(0, 1)
         b = random.randint(0, 1)
         expected_value.append(a | b)
 
-        await w_drv._driver_sent(4, a)  # Write to a_ff
-        await w_drv._driver_sent(5, b)  # Write to b_ff
+        await w_drv._driver_sent(4, a)
+        await w_drv._driver_sent(5, b)
 
         ab_cover(a, b)
 
-        # Allow DUT to process
+        # 200 cycles to complete the execution for delayed_dut
         for _ in range(200):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
@@ -87,13 +86,14 @@ async def dut_test(dut):
     coverage_db.export_to_xml(filename=coverage_file)
 
     if test_failures > 0:
-        raise TestFailure(f"Test failed with {test_failures} mismatches")
+        raise TestFailure(f"Tests failed: {test_failures}")
     elif expected_value:
         raise TestFailure(f"Test completed but {len(expected_value)} expected values weren't checked")
     print("All test vectors passed successfully!")
 
 class InputDriver(BusDriver):
     _signals = ["write_en", "write_address", "write_data", "write_rdy"]
+
     def __init__(self, dut, name, clk):
         super().__init__(dut, name, clk)
         self.bus.write_en.value = 0
@@ -116,20 +116,22 @@ class InputDriver(BusDriver):
 
 class InputMonitor(BusMonitor):
     _signals = ["write_en", "write_address", "write_data", "write_rdy"]
+
     async def _monitor_recv(self):
-        phases_w = {1: "Idle_w", 3: "Txn_w"}
+        phases_w = {1: "Idle_w", 3: "Txn_w"}  # only two states as write_rdy is always 1
         prev_w = "Idle_w"
         while True:
             await FallingEdge(self.clock)
             await ReadOnly()
             Txn_w = (int(self.bus.write_en.value) << 1) | int(self.bus.write_rdy.value)
-            state_w = phases_w.get(Txn_w, None)
+            state_w = phases_w.get(Txn_w)
             if state_w:
                 inputport_cover({'previous_w': prev_w, 'current_w': state_w})
                 prev_w = state_w
 
 class OutputDriver(BusDriver):
     _signals = ["read_en", "read_address", "read_data", "read_rdy"]
+
     def __init__(self, dut, name, clk, sb_callback):
         super().__init__(dut, name, clk)
         self.bus.read_en.value = 0
@@ -150,7 +152,7 @@ class OutputDriver(BusDriver):
         if self.callback and address == 3:
             self.callback(int(self.bus.read_data.value))
         elif address in [0, 1, 2]:
-            cocotb.log.info(f"Status register read: address={address}, value={int(self.bus.read_data.value)}")
+            cocotb.log.info(f"address={address}, value={int(self.bus.read_data.value)}")
 
         await RisingEdge(self.clk)
         await NextTimeStep()
@@ -158,14 +160,15 @@ class OutputDriver(BusDriver):
 
 class OutputMonitor(BusMonitor):
     _signals = ["read_en", "read_address", "read_data", "read_rdy"]
+
     async def _monitor_recv(self):
-        phases_r = {1: "Idle_r", 3: "Txn_r"}
+        phases_r = {1: "Idle_r", 3: "Txn_r"}  # only two states as read_rdy is always 1
         prev_r = "Idle_r"
         while True:
             await FallingEdge(self.clock)
             await ReadOnly()
             Txn_r = (int(self.bus.read_en.value) << 1) | int(self.bus.read_rdy.value)
-            state_r = phases_r.get(Txn_r, None)
+            state_r = phases_r.get(Txn_r)
             if state_r:
                 outputport_cover({'previous_r': prev_r, 'current_r': state_r})
                 prev_r = state_r
