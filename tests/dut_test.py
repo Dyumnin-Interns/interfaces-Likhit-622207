@@ -2,66 +2,54 @@ import cocotb
 from cocotb.triggers import Timer, RisingEdge, ReadOnly, NextTimeStep
 from cocotb_bus.drivers import BusDriver
 
-def get_sb_fn(expected_values, test_failures_ref):
-    def sb_fn(actual_value):
-        if not expected_values:
-            print("Warning: Unexpected output received")
-            return
-
-        expected = expected_values.pop(0)
-        print(f"Expected: {expected}, Actual: {actual_value}")
-
-        if actual_value != expected:
-            test_failures_ref[0] += 1
-            print("  -> Mismatch detected!")
-    return sb_fn
-
-
 @cocotb.test()
 async def dut_test(dut):
-    global expected_value, test_failures
-    test_failures = 0
-    
-    # Test vectors (a, b, expected OR result)
-    a = (0, 0, 1, 1)
-    b = (0, 1, 0, 1)
     expected_value = [0, 1, 1, 1]
+    test_failures = 0
 
-    # Extended reset sequence for delayed DUT
+    def sb_fn(actual_value):
+        nonlocal expected_value, test_failures
+        if not expected_value:
+            dut._log.warning("Unexpected output received")
+            return
+        
+        expected = expected_value.pop(0)
+        dut._log.info(f"Expected: {expected}, Actual: {actual_value}")
+        
+        if actual_value != expected:
+            test_failures += 1
+            dut._log.error("  -> Mismatch detected!")
+
+    # Reset sequence
     dut.RST_N.value = 0
-    await Timer(100, 'ns')  # Longer reset for delayed version
+    await RisingEdge(dut.CLK)
     dut.RST_N.value = 1
-    await Timer(100, 'ns')  # Additional stabilization
+    await RisingEdge(dut.CLK)
 
-    # Create drivers
     w_drv = InputDriver(dut, "", dut.CLK)
     r_drv = OutputDriver(dut, "", dut.CLK, sb_fn)
+    
+    a = (0, 0, 1, 1)
+    b = (0, 1, 0, 1)
 
     for i in range(4):
-        # Write phase with handshaking
-        await w_drv._driver_sent(4, a[i])  # Write to a_ff
-        await w_drv._driver_sent(5, b[i])  # Write to b_ff
+        await w_drv._driver_sent(4, a[i])
+        await w_drv._driver_sent(5, b[i])
         
-        # Extended processing delay for delayed DUT (7 cycles)
         for _ in range(3):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
-        
-        # Read phase
-        await r_drv._driver_sent(3)  # Read from y_ff
+
+        await r_drv._driver_sent(3)
         await RisingEdge(dut.CLK)
         await NextTimeStep()
 
-        # Additional recovery cycle
-        await RisingEdge(dut.CLK)
-        await NextTimeStep()
-
-    # Final check
     if test_failures > 0:
-        assert False, f"Test failed with {test_failures} mismatches"
+        raise TestFailure(f"Test failed with {test_failures} mismatches")
     elif expected_value:
-        assert False, f"Test completed but {len(expected_value)} expected values weren't checked"
-    print("All test vectors passed successfully!")
+        raise TestFailure(f"{len(expected_value)} expected values were not checked")
+    
+    dut._log.info("All test vectors passed successfully!")
 
 class InputDriver(BusDriver):
     _signals = ["write_en", "write_address", "write_data", "write_rdy"]
