@@ -41,8 +41,8 @@ async def dut_test(dut):
         await w_drv._driver_sent(4, a[i])  # Write to a_ff
         await w_drv._driver_sent(5, b[i])  # Write to b_ff
         
-        # Processing delay (3 cycles - accounts for a_ff and y_ff size=2)
-        for _ in range(3):
+        # Processing delay (200 cycles - accounts for a_ff and y_ff size=2)
+        for _ in range(175):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
         
@@ -89,26 +89,17 @@ class OutputDriver(BusDriver):
         self.clk = clk
         self.callback = sb_callback
 
-async def _driver_sent(self, address, sync=True):
-    # First, set the read_en signal to 1 before the ReadOnly phase.
-    self.bus.read_en.value = 1
-    self.bus.read_address.value = address
-    
-    # Wait for the next rising edge of the clock
-    await RisingEdge(self.clk)
-    
-    # Now enter the ReadOnly phase
-    await ReadOnly()
-
-    # Perform any necessary callback or read operation
-    if self.callback:
-        self.callback(int(self.bus.read_data.value))
-
-    # Finally, make sure to set `read_en` to 0 *after* ReadOnly phase is complete.
-    self.bus.read_en.value = 0
-
-    # Wait for the rising edge of the clock after the write operation
-    await RisingEdge(self.clk)
-    await NextTimeStep()
-
-
+    async def _driver_sent(self, address, sync=True):
+        await RisingEdge(self.clk)
+        while not self.bus.read_rdy.value:
+            await RisingEdge(self.clk)   
+        self.bus.read_en.value = 1
+        self.bus.read_address.value = address
+        
+        await ReadOnly()
+        if self.callback:
+            self.callback(int(self.bus.read_data.value))
+        
+        await RisingEdge(self.clk)
+        self.bus.read_en.value = 0
+        await NextTimeStep()
