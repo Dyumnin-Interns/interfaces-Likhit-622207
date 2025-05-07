@@ -1,7 +1,6 @@
 import cocotb
 from cocotb.triggers import Timer, RisingEdge, ReadOnly, NextTimeStep
 from cocotb_bus.drivers import BusDriver
-from cocotb.result import TestFailure
 
 def sb_fn(actual_value):
     global expected_value, test_failures
@@ -26,9 +25,9 @@ async def dut_test(dut):
     b = (0, 1, 0, 1)
     expected_value = [0, 1, 1, 1]
 
-    # Reset sequence (extended to ensure clean start)
+    # Extended reset sequence for delayed DUT
     dut.RST_N.value = 0
-    await Timer(100, 'ns')  # Extended reset
+    await Timer(100, 'ns')  # Longer reset for delayed version
     dut.RST_N.value = 1
     await Timer(100, 'ns')  # Additional stabilization
 
@@ -37,12 +36,12 @@ async def dut_test(dut):
     r_drv = OutputDriver(dut, "", dut.CLK, sb_fn)
 
     for i in range(4):
-        # Write phase with proper handshaking
+        # Write phase with handshaking
         await w_drv._driver_sent(4, a[i])  # Write to a_ff
         await w_drv._driver_sent(5, b[i])  # Write to b_ff
         
-        # Extended processing delay (5 cycles total)
-        for _ in range(5):
+        # Extended processing delay for delayed DUT (7 cycles)
+        for _ in range(7):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
         
