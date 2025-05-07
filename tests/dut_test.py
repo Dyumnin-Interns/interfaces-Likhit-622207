@@ -89,23 +89,26 @@ class OutputDriver(BusDriver):
         self.clk = clk
         self.callback = sb_callback
 
-    async def _driver_sent(self, address, sync=True):
-        # Ensure `read_en` is set before the `ReadOnly` phase
-        self.bus.read_en.value = 1
-        self.bus.read_address.value = address
-        
-        await RisingEdge(self.clk)  # Wait for the rising edge of the clock
-        
-        # Enter the ReadOnly phase
-        await ReadOnly()
-        
-        # Invoke the callback to process the read data
-        if self.callback:
-            self.callback(int(self.bus.read_data.value))
+async def _driver_sent(self, address, sync=True):
+    # First, set the read_en signal to 1 before the ReadOnly phase.
+    self.bus.read_en.value = 1
+    self.bus.read_address.value = address
+    
+    # Wait for the next rising edge of the clock
+    await RisingEdge(self.clk)
+    
+    # Now enter the ReadOnly phase
+    await ReadOnly()
 
-        # Set `read_en` to 0 after the read cycle is complete
-        self.bus.read_en.value = 0
+    # Perform any necessary callback or read operation
+    if self.callback:
+        self.callback(int(self.bus.read_data.value))
 
-        await RisingEdge(self.clk)
-        await NextTimeStep()
+    # Finally, make sure to set `read_en` to 0 *after* ReadOnly phase is complete.
+    self.bus.read_en.value = 0
+
+    # Wait for the rising edge of the clock after the write operation
+    await RisingEdge(self.clk)
+    await NextTimeStep()
+
 
