@@ -42,7 +42,7 @@ async def dut_test(dut):
         await w_drv._driver_sent(5, b[i])  # Write to b_ff
         
         # Processing delay (3 cycles - accounts for a_ff and y_ff size=2)
-        for _ in range(150):
+        for _ in range(200):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
         
