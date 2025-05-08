@@ -50,36 +50,51 @@ async def dut_test(dut):
     expected_value = []
 
     dut.RST_N.value = 1
-    await Timer(20, 'ns')
+    await Timer(50, 'ns')
     dut.RST_N.value = 0
-    await Timer(20, 'ns')
+    await Timer(50, 'ns')
     dut.RST_N.value = 1
 
     w_drv = InputDriver(dut, "", dut.CLK)
     r_drv = OutputDriver(dut, "", dut.CLK, sb_fn)
     InputMonitor(dut, "", dut.CLK, callback=inputport_cover)
     OutputMonitor(dut, "", dut.CLK, callback=outputport_cover)
-
-    for _ in range(50):  # Random test
+    # Hit all possible read addresses 0–3 (initial case)
+    for addr in range(3):
+        read_address_cover(addr)
+        await r_drv._driver_sent(addr)
+    for i in range(50):  # Random test
         a = random.randint(0, 1)
         b = random.randint(0, 1)
         expected_value.append(a | b)
 
         await w_drv._driver_sent(4, a)
         await w_drv._driver_sent(5, b)
-
         ab_cover(a, b)
 
         # 200 cycles to complete the execution for delayed_dut
-        for _ in range(200):
+        for j in range(200):
             await RisingEdge(dut.CLK)
             await NextTimeStep()
 
-        # Hit all possible read addresses 0–3
+        # Hit all possible read addresses 0–3 (to check in normal working)
         for addr in range(4):
             read_address_cover(addr)
             await r_drv._driver_sent(addr)
-
+    #to set the fifo a full flag
+    await w_drv._driver_sent(4, a)
+    await w_drv._driver_sent(4, a)
+    await w_drv._driver_sent(4, a)
+    for addr in range(3):
+        read_address_cover(addr)
+        await r_drv._driver_sent(addr)
+    #to set the fifo b full flag
+    await w_drv._driver_sent(5, b)
+    await w_drv._driver_sent(5, b)
+    await w_drv._driver_sent(5, b)
+    for addr in range(3):
+        read_address_cover(addr)
+        await r_drv._driver_sent(addr)
     # Generate and save coverage report
     coverage_db.report_coverage(cocotb.log.info, bins=True)
     coverage_file = os.path.join(os.getenv("RESULT_PATH", "./"), 'coverage.xml')
@@ -102,7 +117,7 @@ class InputDriver(BusDriver):
         self.clk = clk
 
     async def _driver_sent(self, address, data, sync=True):
-        for _ in range(random.randint(0, 2000)):
+        for l in range(random.randint(1, 200)):
             await RisingEdge(self.clk)
         while not self.bus.write_rdy.value:
             await RisingEdge(self.clk)
@@ -140,7 +155,7 @@ class OutputDriver(BusDriver):
         self.callback = sb_callback
 
     async def _driver_sent(self, address, sync=True):
-        for _ in range(random.randint(0, 2000)):
+        for k in range(random.randint(1, 200)):
             await RisingEdge(self.clk)
         while not self.bus.read_rdy.value:
             await RisingEdge(self.clk)
