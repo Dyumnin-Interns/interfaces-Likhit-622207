@@ -14,9 +14,9 @@ module dut_wrap(
     output read_data,
     output read_rdy
     // to expose FIFO flags
-    output            a_full_n,
-    output            b_full_n,
-    output            y_empty_n
+    output  a_full_n,
+    output  b_full_n,
+    output  y_empty_n
 );
     
     // Instantiate DUT
