@@ -13,8 +13,12 @@ module dut_wrap(
     input read_en,
     output read_data,
     output read_rdy
+    // to expose FIFO flags
+    output            a_full_n,
+    output            b_full_n,
+    output            y_empty_n
 );
-
+    
     // Instantiate DUT
     dut dut_inst (
         .CLK(CLK),
@@ -29,6 +33,10 @@ module dut_wrap(
         .read_rdy(read_rdy)
     );
 
+    assign a_full_n  = dut_inst.a_ff$FULL_N;
+    assign b_full_n  = dut_inst.b_ff$FULL_N;
+    assign y_empty_n = dut_inst.y_ff$EMPTY_N;
+    
     // Clock generation with proper delay
     initial begin
         $dumpfile("waves_dut.vcd");
