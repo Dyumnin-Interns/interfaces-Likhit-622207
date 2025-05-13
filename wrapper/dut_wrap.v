@@ -12,7 +12,7 @@ module dut_wrap(
     input [2:0] read_address,
     input read_en,
     output read_data,
-    output read_rdy
+    output read_rdy,
     // to expose FIFO flags
     output  a_full_n,
     output  b_full_n,
