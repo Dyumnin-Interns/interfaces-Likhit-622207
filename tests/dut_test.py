@@ -6,8 +6,27 @@ from cocotb_coverage.coverage import CoverCross, CoverPoint, coverage_db
 from cocotb_bus.monitors import BusMonitor
 import os
 import random
-import asyncio
 
+# Custom Semaphore implementation using cocotb.Event
+class Semaphore:
+    def __init__(self, initial=1):
+        self._value = initial
+        self._waiters = []
+
+    async def acquire(self):
+        if self._value > 0:
+            self._value -= 1
+        else:
+            ev = Event()
+            self._waiters.append(ev)
+            await ev.wait()
+
+    def release(self):
+        if self._waiters:
+            ev = self._waiters.pop(0)
+            ev.set()        # wake up the oldest waiter
+        else:
+            self._value += 1
 test_failures = 0
 expected_value = []
 
@@ -71,17 +90,7 @@ async def dut_test(dut):
     InputMonitor(dut, "", dut.CLK, callback=inputport_cover)
     OutputMonitor(dut, "", dut.CLK, callback=outputport_cover)
 
-    lock = False
-
-    async def acquire_lock():
-        nonlocal lock
-        while lock:
-            await Timer(1, 'ns')
-        lock = True
-
-    def release_lock():
-        nonlocal lock
-        lock = False
+    input_sem = Semaphore(initial=1)
 
     # Initial reads (addresses 0–2)
     for addr in range(3):
@@ -100,9 +109,11 @@ async def dut_test(dut):
             a_list.append(a)
             while int(dut.a_full_n.value) != 1:
                 await RisingEdge(dut.CLK)
-            await acquire_lock()
-            await w_drv._driver_sent(4, a)
-            release_lock()
+            await input_sem.acquire()
+            try:
+                await w_drv._driver_sent(4, a)
+            finally:
+                input_sem.release()
             await RisingEdge(dut.CLK)
             await Timer(random.randint(1, 100), units='ns')
 
@@ -113,9 +124,11 @@ async def dut_test(dut):
             b_list.append(b)
             while int(dut.b_full_n.value) != 1:
                 await RisingEdge(dut.CLK)
-            await acquire_lock()
-            await w_drv._driver_sent(5, b)
-            release_lock()
+            await input_sem.acquire()
+            try:
+                await w_drv._driver_sent(5, b)
+            finally:
+                input_sem.release()
             await RisingEdge(dut.CLK)
             await Timer(random.randint(1, 100), units='ns')
 
