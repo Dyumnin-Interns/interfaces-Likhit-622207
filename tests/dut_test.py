@@ -1,5 +1,5 @@
 import cocotb
-from cocotb.triggers import Timer, RisingEdge, FallingEdge, ReadOnly, NextTimeStep
+from cocotb.triggers import Timer, RisingEdge, FallingEdge, ReadOnly, NextTimeStep, Event
 from cocotb_bus.drivers import BusDriver
 from cocotb.result import TestFailure
 from cocotb_coverage.coverage import CoverCross, CoverPoint, coverage_db
