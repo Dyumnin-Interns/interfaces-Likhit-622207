@@ -7,9 +7,6 @@ from cocotb_bus.monitors import BusMonitor
 import os
 import random
 
-test_failures = 0
-expected_value = []
-
 def sb_fn(actual_value):
     global expected_value, test_failures
     if not expected_value:
@@ -50,7 +47,6 @@ def outputport_cover(t):
 @CoverPoint("top.read_address", xf=lambda a: a, bins=[0, 1, 2, 3])
 def read_address_cover(a):
     pass
-
 
 @cocotb.test()
 async def dut_test(dut):
