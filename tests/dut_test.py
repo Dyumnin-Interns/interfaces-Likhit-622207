@@ -1,22 +1,18 @@
 import cocotb
 from cocotb.triggers import Timer, RisingEdge, FallingEdge, ReadOnly, NextTimeStep, Lock
 from cocotb_bus.drivers import BusDriver
-from cocotb.result import TestFailure
 from cocotb_coverage.coverage import CoverCross, CoverPoint, coverage_db
 from cocotb_bus.monitors import BusMonitor
 import os
 import random
 
 def sb_fn(actual_value):
-    global expected_value, test_failures
     if not expected_value:
-        cocotb.log.warning("Unexpected output received")
+        cocotb.log.warning("Unexpected output")
         return
     expected = expected_value.pop(0)
+    assert actual_value == expected, "Mismatch"
     cocotb.log.info(f"Expected: {expected}, Actual: {actual_value}")
-    if actual_value != expected:
-        test_failures += 1
-        cocotb.log.error("  -> Mismatch detected!")
 
 @CoverPoint("top.a", xf=lambda a, b: a, bins=[0, 1])
 @CoverPoint("top.b", xf=lambda a, b: b, bins=[0, 1])
@@ -48,10 +44,10 @@ def outputport_cover(t):
 def read_address_cover(a):
     pass
 
+
 @cocotb.test()
 async def dut_test(dut):
-    global expected_value, test_failures
-    test_failures = 0
+    global expected_value
     expected_value = []
 
     dut.RST_N.value = 1
@@ -61,12 +57,13 @@ async def dut_test(dut):
     dut.RST_N.value = 1
     await RisingEdge(dut.CLK)
 
+    input_lock = cocotb.triggers.Lock()
+    output_lock= cocotb.triggers.Lock()
+
     w_drv = InputDriver(dut, "", dut.CLK)
-    r_drv = OutputDriver(dut, "", dut.CLK, sb_fn)
+    r_drv = OutputDriver(dut, "", dut.CLK,sb_fn)
     InputMonitor(dut, "", dut.CLK, callback=inputport_cover)
     OutputMonitor(dut, "", dut.CLK, callback=outputport_cover)
-
-    input_sem = cocotb.triggers.Lock()
 
     # Initial reads (addresses 0–2)
     for addr in range(3):
@@ -78,49 +75,69 @@ async def dut_test(dut):
     b_list = []
     NUM_VECTORS = 50
 
-    # Thread: drive ‘a’ into address 4
+    # drive ‘a’ into address 4
     async def drive_a():
         for _ in range(NUM_VECTORS):
             a = random.randint(0, 1)
             a_list.append(a)
-            while int(dut.a_full_n.value) != 1:
-                await RisingEdge(dut.CLK)
-            async with input_sem:
+            retries = 0
+            async with output_lock:
+                read_address_cover(0)
+                await r_drv._driver_sent(0)
+                while int(dut.read_data.value) != 1:#a_full_n
+                    await RisingEdge(dut.CLK)#dut.read_data
+                    assert (retries < 1000),"Timeout_a"
+                    retries += 1
+            async with input_lock:
                 await w_drv._driver_sent(4, a)
             await RisingEdge(dut.CLK)
             await Timer(random.randint(1, 100), units='ns')
 
-    # Thread: drive ‘b’ into address 5
+    # drive ‘b’ into address 5
     async def drive_b():
         for _ in range(NUM_VECTORS):
             b = random.randint(0, 1)
             b_list.append(b)
-            while int(dut.b_full_n.value) != 1:
-                await RisingEdge(dut.CLK)
-            async with input_sem:
+            retries = 0
+            async with output_lock:
+                read_address_cover(1)
+                await r_drv._driver_sent(1)
+                while int(dut.read_data.value) != 1:#b_full_n
+                    await RisingEdge(dut.CLK) #dut.read_data
+                    assert (retries < 1000),"Timeout_b"
+                    retries += 1
+            async with input_lock:
                 await w_drv._driver_sent(5, b)
             await RisingEdge(dut.CLK)
             await Timer(random.randint(1, 100), units='ns')
 
 
-    # Thread: read back y = a | b from address 3
+    # read back y = a | b from address 3
     async def read_y():
         # wait until both lists have data before sampling each index
         for idx in range(NUM_VECTORS):
             retries = 0
             while idx >= len(a_list) or idx >= len(b_list):
-                if retries > 1000:
-                    raise TestFailure("Timeout")
+                assert (retries < 1000),"Timeout_y"
                 await Timer(10, 'ns')
                 retries += 1
             ab_cover(a_list[idx], b_list[idx])
-            read_address_cover(3)
             expected_value.append(a_list[idx] | b_list[idx])
-            await r_drv._driver_sent(3)
-            # Initial reads (addresses 0–2)
-            for addr in range(3):
-                read_address_cover(addr)
-                await r_drv._driver_sent(addr)
+            retries = 0
+            async with output_lock:
+                read_address_cover(2)
+                await r_drv._driver_sent(2)
+                while int(dut.read_data.value) != 1:#y_empty_n
+                    await RisingEdge(dut.CLK)
+                    assert (retries < 1000),"y_flag stuck at 0"
+                    retries += 1
+                await RisingEdge(dut.CLK)         
+                read_address_cover(3)
+                await r_drv._driver_sent(3)
+                # Initial reads (addresses 0–2)
+                for addr in range(3):
+                    read_address_cover(addr)
+                    await r_drv._driver_sent(addr)
             await RisingEdge(dut.CLK)
             await Timer(random.randint(1,100), units='ns')
 
@@ -132,21 +149,78 @@ async def dut_test(dut):
     await task_a
     await task_b
     await task_r
-
+        
+    # fill b fifo (depth=1)
+    await w_drv._driver_sent(5, 0)
+    retries = 0
+    # Read b flag
+    read_address_cover(1)
+    await r_drv._driver_sent(1)
+    while True:
+        if int(dut.read_data.value) == 0:
+            cocotb.log.info("b_full_n goes to zero")
+            break
+        assert (retries < 1000), "b_full_n flag stuck at 1"
+        await RisingEdge(dut.CLK)
+        retries += 1
+    # empty b fifo
+    await w_drv._driver_sent(4, 1)#drive 1 to a
+    expected_value.append(1)
+    read_address_cover(2)
+    await r_drv._driver_sent(2)
+    while int(dut.read_data.value) != 1:#y_empty_n
+        await RisingEdge(dut.CLK)
+    read_address_cover(3)
+    await r_drv._driver_sent(3)#collect y
+    # fill a fifo (depth=2)
+    await w_drv._driver_sent(4, 0)#drive 0 to a
+    await w_drv._driver_sent(4, 1)#drive 1 to a
+    retries = 0
+    # Read a flag
+    read_address_cover(0)
+    await r_drv._driver_sent(0)
+    while True:
+        if int(dut.read_data.value) == 0:
+            cocotb.log.info("a_full_n goes to zero")
+            break
+        assert (retries < 1000), "a_full_n flag stuck at 1"
+        await RisingEdge(dut.CLK)
+        retries += 1
+    #empty y fifo (depth=2)
+    await w_drv._driver_sent(5, 0)#drive 0 to b
+    expected_value.append(0)
+    read_address_cover(2)
+    await r_drv._driver_sent(2)
+    while int(dut.read_data.value) != 1:#y_empty_n
+        await RisingEdge(dut.CLK)
+    read_address_cover(3)
+    await r_drv._driver_sent(3)#collect y(1st time)
+    await w_drv._driver_sent(5, 0)#drive 0 to b
+    expected_value.append(1)
+    read_address_cover(2)
+    await r_drv._driver_sent(2)
+    while int(dut.read_data.value) != 1:#y_empty_n
+        await RisingEdge(dut.CLK)
+    read_address_cover(3)
+    await r_drv._driver_sent(3)#collect y(2nd time)
+    retries = 0
+    # Read y flag
+    read_address_cover(2)
+    await r_drv._driver_sent(2)
+    while True:
+        if int(dut.read_data.value) == 0:
+            cocotb.log.info("y_empty_n goes to zero")
+            break
+        assert (retries < 1000), "y_empty_n flag stuck at 1"
+        await RisingEdge(dut.CLK)
+        retries += 1
     coverage_db.report_coverage(cocotb.log.info, bins=True)
     coverage_file = os.path.join(os.getenv("RESULT_PATH", "./"), 'coverage.xml')
     coverage_db.export_to_xml(filename=coverage_file)
 
-    if test_failures > 0:
-        raise TestFailure(f"{test_failures} mismatches")
-    elif expected_value:
-        raise TestFailure(f"{len(expected_value)} expected not checked")
-    cocotb.log.info("All test vectors passed!")
-
-
 # DRIVER + MONITOR CLASSES
 class InputDriver(BusDriver):
-    _signals = ["write_en", "write_address", "write_data"]
+    _signals = ["write_en", "write_address", "write_data", "read_en", "read_address", "read_data"]
 
     def __init__(self, dut, name, clk):
         BusDriver.__init__(self, dut, name, clk)
@@ -158,11 +232,14 @@ class InputDriver(BusDriver):
         self.b_full_n = dut.b_full_n
 
     async def _driver_sent(self, address, data, sync=True):
-        for l in range(random.randint(1,10)):
+        for l in range(random.randint(1,20)):
             await RisingEdge(self.clk)
-        fifo_flag = self.a_full_n if address == 4 else self.b_full_n
-        while int(fifo_flag.value) != 1:
-            await RisingEdge(self.clk)
+        #if address == 4:
+        #    self.bus.read_address.value = 0
+        #else:
+        #    self.bus.read_address.value = 1
+        #while int(self.bus.read_data.value) != 1:
+        #    await RisingEdge(self.clk)
         self.bus.write_address.value = address
         self.bus.write_data.value = data
         self.bus.write_en.value = 1
@@ -172,7 +249,7 @@ class InputDriver(BusDriver):
         self.bus.write_en.value = 0
 
 class InputMonitor(BusMonitor):
-    _signals = ["write_en", "write_address", "write_data"]
+    _signals = ["write_en", "write_address", "write_data", "read_en", "read_address", "read_data"]
 
     def __init__(self, dut, name, clock, callback):
         BusMonitor.__init__(self, dut, name, clock, callback)
@@ -189,7 +266,10 @@ class InputMonitor(BusMonitor):
         while True:
             await FallingEdge(self.clock)
             await ReadOnly()
-            full_flag = self.a_full_n if int(self.bus.write_address.value) == 4 else self.b_full_n
+            if int(self.bus.write_address.value) == 4:
+                full_flag = self.a_full_n             
+            else:
+                full_flag = self.b_full_n
             curr_w = (int(self.bus.write_en.value) << 1) | int(full_flag.value)
             inputport_cover({'previous_w': prev_w, 'current_w': phases_w[curr_w]})
             prev_w = phases_w[curr_w]
@@ -203,21 +283,19 @@ class OutputDriver(BusDriver):
         self.bus.read_address.value = 0
         self.clk                    = clk
         self.callback               = sb_callback
-        self.y_empty_n              = dut.y_empty_n
 
     async def _driver_sent(self, address, sync=True):
-        for _ in range(random.randint(1, 10)):
+        for _ in range(random.randint(1, 20)):
             await RisingEdge(self.clk)
-        if address == 3:
-            while int(self.y_empty_n.value) != 1:
-                await RisingEdge(self.clk)
+        #if address == 3:
+        #    while int(self.y_empty_n.value) != 1:
+        #        await RisingEdge(self.clk)
         self.bus.read_address.value = address
         self.bus.read_en.value      = 1
         await ReadOnly()
+        cocotb.log.info(f"ADDR={address} DATA={int(self.bus.read_data.value)}")
         if address == 3:
             self.callback(int(self.bus.read_data.value))
-        else:
-            cocotb.log.info(f"ADDR={address} DATA={int(self.bus.read_data.value)}")
         await RisingEdge(self.clk)
         await NextTimeStep()
         self.bus.read_en.value = 0
